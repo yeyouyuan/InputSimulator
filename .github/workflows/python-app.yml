@@ -1,0 +1,143 @@
+name: InputSimulator 自动化构建
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - 'v*'  # 当推送 v 开头的 tag 时触发
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write  # 允许创建发布
+
+jobs:
+  test:
+    runs-on: windows-latest  # Windows 环境
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 设置 Python 3.8
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.8"
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest pytest-cov
+        pip install pyautogui==0.9.54
+        pip install keyboard==0.13.5
+        pip install python-dotenv==1.0.0
+        pip install colorama==0.4.6
+        pip install ttkthemes==3.2.2
+        pip install pywin32==306
+        
+    - name: 代码风格检查
+      run: |
+        # 检查 Python 语法错误或未定义的变量
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # 检查代码风格（将错误视为警告）
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+    - name: 运行测试
+      run: |
+        pytest --cov=./ --cov-report=xml
+        
+    - name: 上传测试覆盖率报告
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: InputSimulator
+        
+  build:
+    needs: test  # 等待测试任务完成
+    if: startsWith(github.ref, 'refs/tags/v')  # 仅在推送标签时构建
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 设置 Python 3.8
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.8"
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyautogui==0.9.54
+        pip install keyboard==0.13.5
+        pip install python-dotenv==1.0.0
+        pip install colorama==0.4.6
+        pip install ttkthemes==3.2.2
+        pip install pywin32==306
+        pip install pyinstaller
+        
+    - name: 构建应用
+      run: |
+        pyinstaller --clean ^
+                   --win-private-assemblies ^
+                   --noconfirm ^
+                   --noconsole ^
+                   --hidden-import win32api ^
+                   --hidden-import win32con ^
+                   --hidden-import win32gui ^
+                   --hidden-import win32clipboard ^
+                   --hidden-import keyboard ^
+                   --name "InputSimulator" ^
+                   gui_tk.py
+                   
+    - name: 打包文件
+      run: |
+        cd dist
+        7z a -tzip InputSimulator_Windows.zip InputSimulator/
+        
+    - name: 获取更新日志
+      id: changelog
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $changes = git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD
+        $changes = $changes -join "`n"
+        echo "CHANGELOG<<EOF" >> $env:GITHUB_ENV
+        echo "$changes" >> $env:GITHUB_ENV
+        echo "EOF" >> $env:GITHUB_ENV
+      shell: pwsh
+        
+    - name: 创建发布
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: |
+          dist/InputSimulator_Windows.zip
+        body: |
+          InputSimulator ${{ github.ref_name }} 发布
+          
+          ### 更新内容
+          ${{ env.CHANGELOG }}
+          
+          ### 安装说明
+          1. 下载并解压 InputSimulator_Windows.zip
+          2. 运行 InputSimulator.exe
+          
+          ### 功能特点
+          - 支持固定/随机间隔输入
+          - 智能格式化和文本分析
+          - 中英文混排优化
+          - 引号自动匹配
+          - 标点符号规范化
+          
+          ### 注意事项
+          - 首次运行可能需要安装 VC++ 运行库
+          - 如遇到权限问题，请以管理员身份运行
+          - 使用 ESC 键可以紧急停止输入
+          - 请在使用前先在安全环境中测试
+          
+          ### 系统要求
+          - Windows 7/8/10/11
+          - 不需要 Python 环境
+          - 需要 VC++ 运行库
+        draft: false
+        prerelease: false 
